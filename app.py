@@ -6,6 +6,7 @@ from datetime import datetime
 from services.cache import load_local_cache, save_local_cache, reset_local_cache
 from services.musicbrainz import get_album_year_cached, get_album_cover_cached
 from stqdm import stqdm
+from streamlit_sortables import sort_items
 
 # Set the title of the Streamlit dashboard
 st.title("AOTY list from scrobbles")
@@ -25,10 +26,6 @@ uploaded_file = st.sidebar.file_uploader("Upload your scrobble data CSV file:", 
 target_year = st.sidebar.number_input(
     "Enter the year for your AOTY list:", min_value=1900, max_value=2100, step=1, value=datetime.now().year
 )
-
-# Sidebar progress placeholders
-progress_text = st.sidebar.empty()
-unretrievable_text = st.sidebar.empty()
 
 # Main page
 if uploaded_file is not None:
@@ -60,12 +57,16 @@ if uploaded_file is not None:
 
                 # Fetch year and cover from cache or services
                 year = local_cache.get(f"{cache_key}|year") or get_album_year_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
-                cover_url = local_cache.get(f"{cache_key}|cover") or get_album_cover_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
 
                 # Validate year and cover_url
-                if year and int(year) == target_year and cover_url:
+                if year and int(year) == target_year:
                     local_cache[f"{cache_key}|year"] = year
-                    local_cache[f"{cache_key}|cover"] = cover_url
+
+                    # Only fetch cover if it's target year
+                    cover_url = local_cache.get(f"{cache_key}|cover") or get_album_cover_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
+
+                    if cover_url:
+                        local_cache[f"{cache_key}|cover"] = cover_url
 
                     album_key = (row.album, row.artist)
                     album_scrobble_counts[album_key] = album_scrobble_counts.get(album_key, 0) + 1
@@ -76,22 +77,32 @@ if uploaded_file is not None:
             # Save the updated local cache
             save_local_cache(local_cache)
 
-            # Display progress and results
-            progress_text.markdown(f"**Processing complete!** {len(album_details)} albums retrieved.")
-            unretrievable_text.markdown(f"**Unretrievable scrobbles**: {unretrievable_count}")
-
             # Display unique album cards after analysis
             st.header("Albums")
-            for (album, artist), cover_url in album_details.items():
-                if album and artist and cover_url:  # Ensure no ghost cards
-                    scrobble_count = album_scrobble_counts[(album, artist)]
-                    cols = st.columns([1, 3])
-                    with cols[0]:
-                        st.image(cover_url)
-                    with cols[1]:
-                        st.markdown(f"### {album}")
-                        st.markdown(f"**Artist**: {artist}")
-                        st.markdown(f"**Scrobbles**: {scrobble_count:,}")
+
+            # Prepare data for sortable list
+            sortable_items = [
+                f"{album}|{artist}|{album_scrobble_counts[(album, artist)]}"  # Use pipe delimiter for safer splitting
+                for (album, artist) in album_details.keys()
+                if album and artist
+            ]
+
+            sorted_items = sort_items(
+                sortable_items,
+                direction="vertical",
+                key="sortable_albums",
+            )
+
+            # Parse and display sorted items
+            for item in sorted_items:
+                album, artist, scrobbles = item.split('|')  # Split by the pipe delimiter
+                cols = st.columns([1, 3])
+                with cols[0]:
+                    st.image(album_details[(album, artist)])
+                with cols[1]:
+                    st.markdown(f"### {album}")
+                    st.markdown(f"**Artist**: {artist}")
+                    st.markdown(f"**Scrobbles**: {scrobbles}")
 
         else:
             st.error(f"The uploaded file is missing required columns: {required_columns}")

@@ -9,7 +9,7 @@ python3 -m pip install --upgrade pip
 python3 -m venv env && source env/bin/activate
 
 pip3 install --upgrade pip
-pip3 install streamlit pandas musicbrainzngs
+pip3 install streamlit pandas musicbrainzngs streamlit_sortables
 streamlit run app.py
 
 deactivate
