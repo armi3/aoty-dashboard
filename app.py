@@ -5,11 +5,12 @@ import json
 from datetime import datetime
 from services.cache import load_local_cache, save_local_cache, reset_local_cache
 from services.musicbrainz import get_album_year_cached, get_album_cover_cached
+from stqdm import stqdm
 
 # Set the title of the Streamlit dashboard
-st.title("AOTY List Creator from Last.fm Scrobble Data")
+st.title("AOTY list from scrobbles")
 
-# Load cache and check for serialization issues and reset the cache if necessary
+# Load cache, check for serialization issues, and reset the cache if necessary
 try:
     local_cache = load_local_cache()
     json.dumps(local_cache)  # Ensure local_cache is serializable
@@ -26,11 +27,10 @@ target_year = st.sidebar.number_input(
 )
 
 # Sidebar progress placeholders
-progress_bar = st.sidebar.progress(0)
 progress_text = st.sidebar.empty()
 unretrievable_text = st.sidebar.empty()
 
-# Main Page
+# Main page
 if uploaded_file is not None:
     try:
         # Extract the username from the uploaded file name
@@ -49,56 +49,36 @@ if uploaded_file is not None:
             # Skip singles (entries without an album)
             filtered_data = filtered_data[filtered_data["album"].notna()]
 
-            total_rows = len(filtered_data)
-            unretrievable_count = 0
-            start_time = time.time()
-
-            # Dictionaries to store results
             album_scrobble_counts = {}
             album_details = {}
+            unretrievable_count = 0
+            total_rows = len(filtered_data)
 
-            for i, row in filtered_data.iterrows():
-                # Fetch year and cover URL
-                cache_key = f"{row['artist']}|{row['album']}"
-                year = local_cache.get(f"{cache_key}|year")
-                cover_url = local_cache.get(f"{cache_key}|cover")
+            # Process data with progress bar
+            for row in stqdm(filtered_data.itertuples(index=False), total=total_rows, desc="Processing scrobbles"):
+                cache_key = f"{row.artist}|{row.album}"
 
-                if not year or not cover_url:
-                    # Fetch year if not cached
-                    year = get_album_year_cached(local_cache, local_cache, row["album_mbid"], row["artist"], row["album"])
-                    try:
-                        if year is None or int(year) != target_year:
-                            unretrievable_count += 1
-                            continue
-                    except ValueError:
-                        unretrievable_count += 1
-                        continue
+                # Fetch year and cover from cache or services
+                year = local_cache.get(f"{cache_key}|year") or get_album_year_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
+                cover_url = local_cache.get(f"{cache_key}|cover") or get_album_cover_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
 
-                    # Fetch cover if not cached
-                    cover_url = get_album_cover_cached(local_cache, local_cache, row["album_mbid"], row["artist"], row["album"])
-                    if not cover_url:
-                        unretrievable_count += 1
-                        continue
-
-                    # Update cache
+                # Validate year and cover_url
+                if year and int(year) == target_year and cover_url:
                     local_cache[f"{cache_key}|year"] = year
                     local_cache[f"{cache_key}|cover"] = cover_url
 
-                # Update scrobble counts and details
-                album_key = (row["album"], row["artist"])
-                album_scrobble_counts[album_key] = album_scrobble_counts.get(album_key, 0) + 1
-                album_details[album_key] = cover_url
-
-                # Update progress bar and messages
-                progress_bar.progress((i + 1) / total_rows)
-                elapsed_time = time.time() - start_time
-                estimated_total_time = (elapsed_time / (i + 1)) * total_rows
-                estimated_remaining_time = estimated_total_time - elapsed_time
-                progress_text.markdown(f"**{i + 1:,} from {total_rows:,} scrobbles analyzed**")
-                unretrievable_text.markdown(f"**Unretrievable: {unretrievable_count:,} ({(unretrievable_count / total_rows) * 100:.2f}%)**")
+                    album_key = (row.album, row.artist)
+                    album_scrobble_counts[album_key] = album_scrobble_counts.get(album_key, 0) + 1
+                    album_details[album_key] = cover_url
+                else:
+                    unretrievable_count += 1
 
             # Save the updated local cache
             save_local_cache(local_cache)
+
+            # Display progress and results
+            progress_text.markdown(f"**Processing complete!** {len(album_details)} albums retrieved.")
+            unretrievable_text.markdown(f"**Unretrievable scrobbles**: {unretrievable_count}")
 
             # Display unique album cards after analysis
             st.header("Albums")

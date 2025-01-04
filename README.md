@@ -5,10 +5,12 @@ Export CSV from: https://lastfm.ghan.nl/export/
 
 ```
 python3 -m pip install --upgrade pip
-python3 -m venv aoty-dashboard-env
-source aoty-dashboard-env/bin/activate
+
+python3 -m venv env && source env/bin/activate
+
 pip3 install --upgrade pip
 pip3 install streamlit pandas musicbrainzngs
-streamlit run aoty_dashboard.py
+streamlit run app.py
+
 deactivate
 ```
