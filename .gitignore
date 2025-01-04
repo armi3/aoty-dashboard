@@ -173,3 +173,4 @@ cython_debug/
 # misc
 .csv
 static/
+.DS_Store
