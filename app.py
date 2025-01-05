@@ -40,51 +40,84 @@ if uploaded_file is not None:
         required_columns = ["uts", "utc_time", "artist", "artist_mbid", "album", "album_mbid", "track", "track_mbid"]
         if all(column in scrobble_data.columns for column in required_columns):
             # Filter entries based on the target year using utc_time
-            scrobble_data["utc_time"] = pd.to_datetime(scrobble_data["utc_time"], format="%d %b %Y, %H:%M")
+            try:
+                scrobble_data["utc_time"] = pd.to_datetime(scrobble_data["utc_time"], format="%d %b %Y, %H:%M", errors="coerce")
+            except Exception as e:
+                st.error(f"Error parsing dates: {e}")
+                scrobble_data["utc_time"] = pd.NaT
+
             filtered_data = scrobble_data[scrobble_data["utc_time"].dt.year >= target_year]
 
             # Skip singles (entries without an album)
             filtered_data = filtered_data[filtered_data["album"].notna()]
 
+            # Compress data to combine entries with the same artist and album
+            compressed_data = (
+                filtered_data.groupby(["artist", "album"])
+                .size()
+                .reset_index(name="total_scrobbles")
+            )
+
             album_scrobble_counts = {}
             album_details = {}
             unretrievable_count = 0
-            total_rows = len(filtered_data)
+            total_rows = len(compressed_data)
+
+            # Initialize progress bar and text
+            progress_bar = st.sidebar.progress(0)
+            progress_text = st.sidebar.empty()
 
             # Process data with progress bar
-            for row in stqdm(filtered_data.itertuples(index=False), total=total_rows, desc="Processing scrobbles"):
+            for i, row in enumerate(compressed_data.itertuples(index=False), start=1):
                 cache_key = f"{row.artist}|{row.album}"
 
                 # Fetch year and cover from cache or services
-                year = local_cache.get(f"{cache_key}|year") or get_album_year_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
+                year = local_cache.get(f"{cache_key}|year") or get_album_year_cached(local_cache, local_cache, None, row.artist, row.album)
 
-                # Validate year and cover_url
-                if year and int(year) == target_year:
+                if year and year.isdigit() and int(year) == target_year:
                     local_cache[f"{cache_key}|year"] = year
 
-                    # Only fetch cover if it's target year
-                    cover_url = local_cache.get(f"{cache_key}|cover") or get_album_cover_cached(local_cache, local_cache, row.album_mbid, row.artist, row.album)
+                    # Only fetch cover if year is valid
+                    cover_url = local_cache.get(f"{cache_key}|cover") or get_album_cover_cached(local_cache, local_cache, None, row.artist, row.album)
 
                     if cover_url:
                         local_cache[f"{cache_key}|cover"] = cover_url
 
-                    album_key = (row.album, row.artist)
-                    album_scrobble_counts[album_key] = album_scrobble_counts.get(album_key, 0) + 1
-                    album_details[album_key] = cover_url
+                        album_key = (row.album, row.artist)
+                        album_scrobble_counts[album_key] = row.total_scrobbles
+                        album_details[album_key] = {"cover": cover_url, "year": year}
                 else:
                     unretrievable_count += 1
+
+                # Update progress bar and text
+                progress_bar.progress(i / total_rows)
+                progress_text.markdown(f"Processing: {i}/{total_rows} ({(i / total_rows) * 100:.2f}%)")
 
             # Save the updated local cache
             save_local_cache(local_cache)
 
-            # Display unique album cards after analysis
+            # Prepare the initial AOTY DataFrame
+            aoty_df = pd.DataFrame([
+                {
+                    "Album": album,
+                    "Artist": artist,
+                    "Release Year": details["year"],
+                    "Total Scrobbles": album_scrobble_counts[(album, artist)]
+                }
+                for (album, artist), details in album_details.items()
+            ])
+
+            # Save the initial AOTY list to a CSV file
+            initial_csv_path = f"aoty_list_{target_year}.csv"
+            aoty_df.to_csv(initial_csv_path, index=False)
+            st.sidebar.download_button("Download Initial AOTY List", initial_csv_path)
+
+            # Display the sortable cards
             st.header("Albums")
 
-            # Prepare data for sortable list
             sortable_items = [
-                f"{album}|{artist}|{album_scrobble_counts[(album, artist)]}"  # Use pipe delimiter for safer splitting
-                for (album, artist) in album_details.keys()
-                if album and artist
+                f"{row['Album']}|{row['Artist']}|{row['Total Scrobbles']}"
+                for _, row in aoty_df.iterrows()
             ]
 
             sorted_items = sort_items(
@@ -93,12 +126,37 @@ if uploaded_file is not None:
                 key="sortable_albums",
             )
 
-            # Parse and display sorted items
+            # Create final AOTY list after reordering
+            if st.button("Generate Final AOTY List"):
+                final_aoty_data = []
+                for item in sorted_items:
+                    try:
+                        album, artist, scrobbles = item.split('|')
+                        final_aoty_data.append({
+                            "Album": album,
+                            "Artist": artist,
+                            "Release Year": aoty_df.loc[(aoty_df["Album"] == album) & (aoty_df["Artist"] == artist), "Release Year"].values[0],
+                            "Total Scrobbles": int(scrobbles)
+                        })
+                    except ValueError:
+                        st.warning(f"Skipping invalid item: {item}")
+
+                final_aoty_df = pd.DataFrame(final_aoty_data)
+                final_csv_path = f"final_aoty_list_{target_year}.csv"
+                final_aoty_df.to_csv(final_csv_path, index=False)
+                st.sidebar.download_button("Download Final AOTY List", final_csv_path)
+
+            # Display the reordered list with cards
             for item in sorted_items:
-                album, artist, scrobbles = item.split('|')  # Split by the pipe delimiter
+                try:
+                    album, artist, scrobbles = item.split('|')
+                except ValueError:
+                    st.warning(f"Skipping invalid item: {item}")
+                    continue
+
                 cols = st.columns([1, 3])
                 with cols[0]:
-                    st.image(album_details[(album, artist)])
+                    st.image(album_details[(album, artist)]["cover"])
                 with cols[1]:
                     st.markdown(f"### {album}")
                     st.markdown(f"**Artist**: {artist}")
