@@ -1,7 +1,8 @@
 # aoty-dashboard
-💿 Streamlit dashboard for making AOTY lists based on scrobbles.
+💿 Streamlit dashboard for making AOTY lists based on Last.fm scrobbles.
+🚧 WIP! The challenge is to start over until I get it done in only a couple of sittings.
 
-Export CSV from: https://lastfm.ghan.nl/export/
+Export scrobbles CSV from: https://lastfm.ghan.nl/export/
 
 ```
 python3 -m pip install --upgrade pip
@@ -14,26 +15,3 @@ streamlit run app.py
 
 deactivate
 ```
-
-
-creo que debería:
-* raw scrobble data
-* initial aoty list
-* custom aoty list
-
-- filter out older than target year
-- filter out w/o album
-- if album not cached:
-  - fetch album release date
-  - if release date older than target year, discard
-  - if single, discard
-- if album cached:
-  - add scrobble count
-
-- order by scrobble count > save
-
-- customize > save
-
-
-
-see: https://stridegpt.streamlit.app
